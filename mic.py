@@ -1,0 +1,212 @@
+import pyaudio
+import numpy as np
+from openwakeword.model import Model
+import argparse
+import wave
+import tempfile
+import requests
+import paho.mqtt.client as mqtt
+import logging
+from scipy.signal import resample
+from threading import Thread
+
+# Parse input arguments
+parser=argparse.ArgumentParser()
+parser.add_argument(
+    "--input-frame-size",
+    help="How much audio (in number of samples) to predict on at once for wake word",
+    type=int,
+    default=1280,
+    required=False
+)
+parser.add_argument(
+    "--input-rate",
+    help="Sample rate",
+    type=int,
+    default=16000,
+    required=False
+)
+parser.add_argument(
+    "--input-channels",
+    type=int,
+    default=1,
+    required=False
+)
+parser.add_argument(
+    "--wake-model-path",
+    help="The path of a specific model to load",
+    type=str,
+    default="",
+    required=False
+)
+parser.add_argument(
+    "--inference-framework",
+    help="The wake word inference framework to use (either 'onnx' or 'tflite'",
+    type=str,
+    default='tflite',
+    required=False
+)
+parser.add_argument(
+    "--listen-duration",
+    help="Once wake word detected how long to listen to in seconds",
+    type=int,
+    default=2,
+    required=False
+)
+parser.add_argument(
+    "--mic-index",
+    help="Which microphone to use",
+    type=int,
+    default=None,
+    required=False
+)
+parser.add_argument(
+    "--transcription-model",
+    type=str,
+    default='whisper-base-q5_1',
+    required=False
+)
+parser.add_argument(
+    "--transcription-language",
+    type=str,
+    default='en',
+    required=False
+)
+parser.add_argument(
+    "--transcription-url",
+    type=str,
+    default='http://libreelec:8080/v1/audio/transcriptions',
+    required=False
+)
+parser.add_argument(
+    "--mqtt-host",
+    type=str,
+    default='pi.lan',
+    required=False
+)
+parser.add_argument(
+    "--mqtt-user",
+    type=str,
+    required=False
+)
+parser.add_argument(
+    "--mqtt-pass",
+    type=str,
+    required=False
+)
+parser.add_argument(
+    "--mqtt-channel",
+    help="Channel to send transcribed text to",
+    default='audio/command',
+    type=str,
+    required=False
+)
+parser.add_argument(
+    "--verbosity",
+    type=str,
+    default="INFO",
+    required=False
+)
+
+args=parser.parse_args()
+
+FORMAT = pyaudio.paInt16
+CHANNELS = args.input_channels
+INPUT_RATE = args.input_rate
+FRAME_SAMPLE_SIZE = args.input_frame_size
+AUDIO_DURATION = args.listen_duration
+# 16 = pyaudio.paInt16
+AUDIO_SIZE= INPUT_RATE * 16 * AUDIO_DURATION / 8
+WAKE_WORD_SAMPLE_RATE = 16000
+MAX_THREADS = 4
+
+if __name__ == "__main__":
+
+    logger = logging.getLogger("mic")
+
+    logging.basicConfig(level=args.verbosity.upper())
+    audio = pyaudio.PyAudio()
+
+    if args.mic_index == -1:
+
+        print("Available devices (all APIs, input + output):", audio.get_device_count())
+        for i in range (audio.get_device_count()):
+            device_info = audio.get_device_info_by_index(i)
+            if device_info['maxInputChannels'] != 0 and device_info['hostApi'] == 0:
+                print('Device ' + str(i) + ': ' + device_info['name'])
+        print("Please provide a --mic-index argument")
+        exit(0)
+
+    mic_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=INPUT_RATE, input=True, frames_per_buffer=FRAME_SAMPLE_SIZE, input_device_index=args.mic_index)
+
+    # Load pre-trained openwakeword models
+    if args.wake_model_path != "":
+        owwModel = Model(wakeword_models=[args.wake_model_path], inference_framework=args.inference_framework, enable_speex_noise_suppression=True, vad_threshold=0.5)
+    else:
+        owwModel = Model(inference_framework=args.inference_framework, enable_speex_noise_suppression=True, vad_threshold=0.5)
+
+    detected = False
+
+    mqttc = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    mqttc.enable_logger()
+    if args.mqtt_user and args.mqtt_pass:
+        mqttc.username_pw_set(args.mqtt_user, args.mqtt_pass)
+    mqttc.connect(args.mqtt_host, 1883, 60)
+    mqttc.loop_start()
+    
+    while True:
+        # Get audio
+        inputRawData = mic_stream.read(FRAME_SAMPLE_SIZE, exception_on_overflow=False)
+
+        if detected:
+            obj.writeframesraw(inputRawData)
+            bytesWritten += len(inputRawData)
+
+            logger.debug("Audio bytes read %s", bytesWritten)
+
+            if bytesWritten >= AUDIO_SIZE:
+                obj.close()
+
+                def transcribe():
+                    files = {'file': open(temp.name,'rb')}
+                    values = {'model': args.transcription_model, 'language': args.transcription_language}
+
+                    r = requests.post(args.transcription_url, files=files, data=values)
+                    text = r.json()["text"]
+                    logger.debug("Text transcribed: %s", text)
+
+                    if text != "[BLANK_AUDIO]":
+                        mqttc.publish(args.mqtt_channel, payload=text, qos=0, retain=False)
+
+                t = Thread(target=transcribe)
+                t.start()
+
+                detected = False
+            continue
+
+
+        audioInput = np.frombuffer(inputRawData, dtype=np.int16)
+
+        if args.input_rate != WAKE_WORD_SAMPLE_RATE:
+            logger.debug("Resample from %s to %s data size %s to %s", args.input_rate, 16000, len(audioInput), 
+                         int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
+            audioInput = resample(audioInput, int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
+
+        # Feed to openWakeWord model
+        prediction = owwModel.predict(audioInput.astype(np.int16))
+
+        for mdl in owwModel.prediction_buffer.keys():
+            scores = list(owwModel.prediction_buffer[mdl])
+
+            if scores[-1] > 0.5:
+                detected = True
+                bytesWritten = 0
+                temp = tempfile.NamedTemporaryFile()
+                obj = wave.open(temp, "wb")
+                obj.setnchannels(CHANNELS)
+                obj.setsampwidth(audio.get_sample_size(FORMAT)) 
+                obj.setframerate(INPUT_RATE)
+                logger.debug("Wake word detected %s", mdl)
+                owwModel.reset()
+                break
+      

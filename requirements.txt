@@ -1,0 +1,6 @@
+numpy==1.26.4
+openwakeword==0.6.0
+paho-mqtt==2.1.0
+PyAudio==0.2.14
+requests==2.32.4
+scipy==1.15.3
