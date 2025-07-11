@@ -170,7 +170,7 @@ if __name__ == "__main__":
     models_to_load = []
     if args.wake_model:
         models_to_load.append(args.wake_model)
-    owwModel = Model(models_to_load, inference_framework=args.inference_framework, enable_speex_noise_suppression=args.suppress_noise, vad_threshold=args.vad_threshold)
+    oww_model = Model(models_to_load, inference_framework=args.inference_framework, enable_speex_noise_suppression=args.suppress_noise, vad_threshold=args.vad_threshold)
 
     detected = False
 
@@ -183,15 +183,15 @@ if __name__ == "__main__":
     
     while True:
         # Get audio
-        inputRawData = mic_stream.read(args.input_frame_size, exception_on_overflow=False)
+        input_raw_data = mic_stream.read(args.input_frame_size, exception_on_overflow=False)
 
         if detected:
-            obj.writeframesraw(inputRawData)
-            bytesWritten += len(inputRawData)
+            obj.writeframesraw(input_raw_data)
+            bytes_written += len(input_raw_data)
 
-            logger.debug("Audio bytes read %s", bytesWritten)
+            logger.debug("Audio bytes read %s", bytes_written)
 
-            if bytesWritten >= AUDIO_SIZE:
+            if bytes_written >= AUDIO_SIZE:
                 obj.close()
 
                 def transcribe():
@@ -203,40 +203,39 @@ if __name__ == "__main__":
                         text = r.json()["text"]
 
                         logger.debug("Text transcribed: %s", text)
-
-                        if text != "[BLANK_AUDIO]":
-                            mqttc.publish(args.mqtt_channel, payload=text, qos=0, retain=False)
+                        unknown_text = text.startswith(("[", "(")) and text.endswith(("]", ")"))
+                        if not unknown_text:
+                            mqttc.publish(args.mqtt_topic, payload=text, qos=0, retain=False)
                     except requests.exceptions.RequestException as e:
                         logger.error("Request failed %s", e)
 
                 t = Thread(target=transcribe)
                 t.start()
-
+                oww_model.reset()
                 detected = False
             continue
 
 
-        audioInput = np.frombuffer(inputRawData, dtype=np.int16)
+        audio_input = np.frombuffer(input_raw_data, dtype=np.int16)
 
         if args.input_rate != WAKE_WORD_SAMPLE_RATE:
-            logger.debug("Resample from %s to %s data size %s to %s", args.input_rate, 16000, len(audioInput), 
-                         int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
-            audioInput = resample(audioInput, int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
+            # logger.debug("Resample from %s to %s data size %s to %s", args.input_rate, 16000, len(audioInput), 
+            #              int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
+            audio_input = resample(audio_input, int(len(audio_input) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
 
-        prediction = owwModel.predict(audioInput.astype(np.int16))
+        prediction = oww_model.predict(audio_input.astype(np.int16))
 
-        for mdl in owwModel.prediction_buffer.keys():
-            scores = list(owwModel.prediction_buffer[mdl])
+        for mdl in oww_model.prediction_buffer.keys():
+            scores = list(oww_model.prediction_buffer[mdl])
 
             if scores[-1] > 0.5:
                 detected = True
-                bytesWritten = 0
+                bytes_written = 0
                 temp = tempfile.NamedTemporaryFile()
                 obj = wave.open(temp, "wb")
                 obj.setnchannels(args.input_channels)
                 obj.setsampwidth(audio.get_sample_size(FORMAT)) 
                 obj.setframerate(args.input_rate)
                 logger.debug("Wake word detected %s", mdl)
-                owwModel.reset()
                 break
       
