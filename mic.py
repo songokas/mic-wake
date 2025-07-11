@@ -1,6 +1,7 @@
 import pyaudio
 import numpy as np
 from openwakeword.model import Model
+from openwakeword.utils import download_models
 import argparse
 import wave
 import tempfile
@@ -33,22 +34,45 @@ parser.add_argument(
     required=False
 )
 parser.add_argument(
-    "--wake-model-path",
-    help="The path of a specific model to load",
+    "--wake-model",
+    help="The path or name of a specific model to load",
     type=str,
     default="",
     required=False
 )
 parser.add_argument(
+    "--vad-threshold",
+    help="Specify voice activity detection threshold (0-1.0)",
+    type=float,
+    default=0.5,
+    required=False
+)
+parser.add_argument(
+    "--download-models",
+    help="Download models",
+    type=bool,
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    required=False
+)
+parser.add_argument(
+    "--suppress-noise",
+    help="Use noise suppression",
+    type=bool,
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    required=False
+)
+parser.add_argument(
     "--inference-framework",
-    help="The wake word inference framework to use (either 'onnx' or 'tflite'",
+    help="The wake word inference framework to use (either 'onnx' or 'tflite')",
     type=str,
-    default='tflite',
+    default='onnx',
     required=False
 )
 parser.add_argument(
     "--listen-duration",
-    help="Once wake word detected how long to listen to in seconds",
+    help="Once wake word is detected how long to listen to in seconds",
     type=int,
     default=2,
     required=False
@@ -75,13 +99,19 @@ parser.add_argument(
 parser.add_argument(
     "--transcription-url",
     type=str,
-    default='http://libreelec:8080/v1/audio/transcriptions',
+    default='http://localhost:8080/v1/audio/transcriptions',
     required=False
 )
 parser.add_argument(
     "--mqtt-host",
     type=str,
-    default='pi.lan',
+    default='localhost',
+    required=False
+)
+parser.add_argument(
+    "--mqtt-port",
+    type=int,
+    default=1883,
     required=False
 )
 parser.add_argument(
@@ -95,9 +125,9 @@ parser.add_argument(
     required=False
 )
 parser.add_argument(
-    "--mqtt-channel",
-    help="Channel to send transcribed text to",
-    default='audio/command',
+    "--mqtt-topic",
+    help="Topic to send transcribed text to",
+    default='transcription/text',
     type=str,
     required=False
 )
@@ -111,20 +141,19 @@ parser.add_argument(
 args=parser.parse_args()
 
 FORMAT = pyaudio.paInt16
-CHANNELS = args.input_channels
-INPUT_RATE = args.input_rate
-FRAME_SAMPLE_SIZE = args.input_frame_size
-AUDIO_DURATION = args.listen_duration
 # 16 = pyaudio.paInt16
-AUDIO_SIZE= INPUT_RATE * 16 * AUDIO_DURATION / 8
+AUDIO_SIZE= args.input_rate * 16 * args.listen_duration / 8
 WAKE_WORD_SAMPLE_RATE = 16000
-MAX_THREADS = 4
 
 if __name__ == "__main__":
 
     logger = logging.getLogger("mic")
 
     logging.basicConfig(level=args.verbosity.upper())
+
+    if args.download_models:
+        download_models()
+
     audio = pyaudio.PyAudio()
 
     if args.mic_index == -1:
@@ -133,17 +162,15 @@ if __name__ == "__main__":
         for i in range (audio.get_device_count()):
             device_info = audio.get_device_info_by_index(i)
             if device_info['maxInputChannels'] != 0 and device_info['hostApi'] == 0:
-                print('Device ' + str(i) + ': ' + device_info['name'])
-        print("Please provide a --mic-index argument")
+                print('Device index ' + str(i) + ': ' + device_info['name'])
         exit(0)
 
-    mic_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=INPUT_RATE, input=True, frames_per_buffer=FRAME_SAMPLE_SIZE, input_device_index=args.mic_index)
+    mic_stream = audio.open(format=FORMAT, channels=args.input_channels, rate=args.input_rate, input=True, frames_per_buffer=args.input_frame_size, input_device_index=args.mic_index)
 
-    # Load pre-trained openwakeword models
-    if args.wake_model_path != "":
-        owwModel = Model(wakeword_models=[args.wake_model_path], inference_framework=args.inference_framework, enable_speex_noise_suppression=True, vad_threshold=0.5)
-    else:
-        owwModel = Model(inference_framework=args.inference_framework, enable_speex_noise_suppression=True, vad_threshold=0.5)
+    models_to_load = []
+    if args.wake_model:
+        models_to_load.append(args.wake_model)
+    owwModel = Model(models_to_load, inference_framework=args.inference_framework, enable_speex_noise_suppression=args.suppress_noise, vad_threshold=args.vad_threshold)
 
     detected = False
 
@@ -151,12 +178,12 @@ if __name__ == "__main__":
     mqttc.enable_logger()
     if args.mqtt_user and args.mqtt_pass:
         mqttc.username_pw_set(args.mqtt_user, args.mqtt_pass)
-    mqttc.connect(args.mqtt_host, 1883, 60)
+    mqttc.connect(args.mqtt_host, args.mqtt_port, 60)
     mqttc.loop_start()
     
     while True:
         # Get audio
-        inputRawData = mic_stream.read(FRAME_SAMPLE_SIZE, exception_on_overflow=False)
+        inputRawData = mic_stream.read(args.input_frame_size, exception_on_overflow=False)
 
         if detected:
             obj.writeframesraw(inputRawData)
@@ -171,12 +198,16 @@ if __name__ == "__main__":
                     files = {'file': open(temp.name,'rb')}
                     values = {'model': args.transcription_model, 'language': args.transcription_language}
 
-                    r = requests.post(args.transcription_url, files=files, data=values)
-                    text = r.json()["text"]
-                    logger.debug("Text transcribed: %s", text)
+                    try:
+                        r = requests.post(args.transcription_url, files=files, data=values)
+                        text = r.json()["text"]
 
-                    if text != "[BLANK_AUDIO]":
-                        mqttc.publish(args.mqtt_channel, payload=text, qos=0, retain=False)
+                        logger.debug("Text transcribed: %s", text)
+
+                        if text != "[BLANK_AUDIO]":
+                            mqttc.publish(args.mqtt_channel, payload=text, qos=0, retain=False)
+                    except requests.exceptions.RequestException as e:
+                        logger.error("Request failed %s", e)
 
                 t = Thread(target=transcribe)
                 t.start()
@@ -192,7 +223,6 @@ if __name__ == "__main__":
                          int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
             audioInput = resample(audioInput, int(len(audioInput) / args.input_rate * WAKE_WORD_SAMPLE_RATE))
 
-        # Feed to openWakeWord model
         prediction = owwModel.predict(audioInput.astype(np.int16))
 
         for mdl in owwModel.prediction_buffer.keys():
@@ -203,9 +233,9 @@ if __name__ == "__main__":
                 bytesWritten = 0
                 temp = tempfile.NamedTemporaryFile()
                 obj = wave.open(temp, "wb")
-                obj.setnchannels(CHANNELS)
+                obj.setnchannels(args.input_channels)
                 obj.setsampwidth(audio.get_sample_size(FORMAT)) 
-                obj.setframerate(INPUT_RATE)
+                obj.setframerate(args.input_rate)
                 logger.debug("Wake word detected %s", mdl)
                 owwModel.reset()
                 break

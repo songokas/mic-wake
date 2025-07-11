@@ -4,3 +4,4 @@ paho-mqtt==2.1.0
 PyAudio==0.2.14
 requests==2.32.4
 scipy==1.15.3
+speexdsp-ns==0.1.2
