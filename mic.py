@@ -138,8 +138,8 @@ parser.add_argument(
     required=False
 )
 parser.add_argument(
-    "--mqtt-payload-lowercase",
-    help="Lowercase mqtt payload",
+    "--mqtt-payload-normalize",
+    help="Lowercase and strip non alphanumeric chars",
     type=bool,
     action=argparse.BooleanOptionalAction,
     default=False,
@@ -213,8 +213,8 @@ if __name__ == "__main__":
                         logger.debug("Text transcribed: %s", text)
                         is_unknown_text = text.startswith(("[", "(")) and text.endswith(("]", ")"))
                         if not is_unknown_text:
-                            if args.mqtt_payload_lowercase:
-                                text = text.lower()
+                            if args.mqtt_payload_normalize:
+                                text = text.join(char for char in text if char.isalnum()).lower()
                             mqttc.publish(args.mqtt_topic, payload=text, qos=0, retain=False)
                     except requests.exceptions.RequestException as e:
                         logger.error("Request failed %s", e)
