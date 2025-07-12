@@ -137,6 +137,14 @@ parser.add_argument(
     default="INFO",
     required=False
 )
+parser.add_argument(
+    "--mqtt-payload-lowercase",
+    help="Lowercase mqtt payload",
+    type=bool,
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    required=False
+)
 
 args=parser.parse_args()
 
@@ -203,8 +211,10 @@ if __name__ == "__main__":
                         text = r.json()["text"]
 
                         logger.debug("Text transcribed: %s", text)
-                        unknown_text = text.startswith(("[", "(")) and text.endswith(("]", ")"))
-                        if not unknown_text:
+                        is_unknown_text = text.startswith(("[", "(")) and text.endswith(("]", ")"))
+                        if not is_unknown_text:
+                            if args.mqtt_payload_lowercase:
+                                text = text.lower()
                             mqttc.publish(args.mqtt_topic, payload=text, qos=0, retain=False)
                     except requests.exceptions.RequestException as e:
                         logger.error("Request failed %s", e)
