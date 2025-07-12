@@ -106,6 +106,13 @@ parser.add_argument(
     default=False,
     required=False,
 )
+parser.add_argument(
+    "--normalize-pattern",
+    help="Pattern to strip chars",
+    type=str,
+    default="[\W_ ]+",
+    required=False,
+)
 
 args = parser.parse_args()
 
@@ -139,6 +146,7 @@ if __name__ == "__main__":
         channels=args.input_channels,
         rate=args.input_rate,
         input=True,
+        output=False,
         frames_per_buffer=args.input_frame_size,
         input_device_index=args.mic_index,
     )
@@ -162,7 +170,7 @@ if __name__ == "__main__":
     mqttc.connect(args.mqtt_host, args.mqtt_port, 60)
     mqttc.loop_start()
 
-    non_alpha_pattern = re.compile("[\W_]+")
+    normalize_pattern = re.compile(args.normalize_pattern)
 
     while True:
         # Get audio
@@ -198,7 +206,7 @@ if __name__ == "__main__":
                         )
                         if not is_unknown_text:
                             if args.mqtt_payload_normalize:
-                                text = non_alpha_pattern.sub("", text.lower())
+                                text = normalize_pattern.sub("", text.lower())
                                 logger.debug("Normalize to %s", text)
                             mqttc.publish(
                                 args.mqtt_topic, payload=text, qos=0, retain=False
