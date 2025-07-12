@@ -1,0 +1,11 @@
+[Unit]
+Description=Listen for wake word, transcribe remotely and send it to mqtt
+
+[Service]
+WorkingDirectory=%h/mic-wake
+ExecStart=%h/bin/python3 mic.py --wake-model models/alexa_v0.1.onnx --mqtt-topic audio/command --mqtt-host localhost --mqtt-user audio --mqtt-pass pass --transcription-url http://localhost:8080/v1/audio/transcriptions --mqtt-payload-normalize
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
