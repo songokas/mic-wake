@@ -110,7 +110,7 @@ parser.add_argument(
     "--normalize-pattern",
     help="Pattern to strip chars",
     type=str,
-    default="[^a-zA-Z0-9 ]+",
+    default=" *[^a-zA-Z0-9 ]+ *",
     required=False,
 )
 
