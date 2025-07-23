@@ -33,6 +33,10 @@ bin/python3 mic.py --verbosity debug --input-rate 44100 --input-frame-size 3528 
 
 # full example
 ./bin/python3 mic.py --verbosity debug --mic-index 2 --input-rate 48000 --input-frame-size 3840 --input-channels 1 --wake-model models/alexa_v0.1.onnx --mqtt-topic audio/commands --mqtt-host localhost --mqtt-user audio --mqtt-pass pass --transcription-url http://localhost:8080/v1/audio/transcriptions
+
+# use docker
+docker build -t mic-wake .
+docker run --rm --device /dev/snd mic-wake --input-rate 48000 --input-frame-size 3840
 ```
 
 Debug microphone
@@ -56,4 +60,15 @@ systemctl --user daemon-reload
 systemctl --user start mic-wake
 systemctl --user status mic-wake
 systemctl --user enable mic-wake
+```
+
+Rasberry PI issue with alsaequal
+
+While portaudio is producing a device list, opening and closing devices
+opening alsaequal device with snd_pcm_open and getting a failure somehow
+keeps the device open (look at alsaequal implementation for further clues)
+
+```
+# remove alsaequal definition
+sudo rm /etc/alsa/conf.d/alsaequal.conf
 ```

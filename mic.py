@@ -100,7 +100,7 @@ parser.add_argument(
 parser.add_argument("--verbosity", type=str, default="INFO", required=False)
 parser.add_argument(
     "--mqtt-payload-normalize",
-    help="Lowercase and strip non alphanumeric chars",
+    help="Lowercase and strip non alphanumeric chars (except space)",
     type=bool,
     action=argparse.BooleanOptionalAction,
     default=False,
@@ -110,7 +110,7 @@ parser.add_argument(
     "--normalize-pattern",
     help="Pattern to strip chars",
     type=str,
-    default="[\W_ ]+",
+    default="[^a-zA-Z0-9 ]+",
     required=False,
 )
 
@@ -134,7 +134,12 @@ if __name__ == "__main__":
 
     if args.mic_index == -1:
 
-        print("Available devices (all APIs, input + output):", audio.get_device_count())
+        print(
+            "Available devices (all APIs, input + output):",
+            audio.get_device_count(),
+            # audio.get_default_output_device_info(),
+            # audio.get_default_input_device_info(),
+        )
         for i in range(audio.get_device_count()):
             device_info = audio.get_device_info_by_index(i)
             if device_info["maxInputChannels"] != 0 and device_info["hostApi"] == 0:
