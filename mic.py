@@ -211,6 +211,11 @@ if __name__ == "__main__":
                         is_unknown_text = text.startswith(("[", "(")) and text.endswith(
                             ("]", ")")
                         )
+                        # TODO use python libraries
+                        # you may want to execute few commands on transcription
+                        # aplay = Popen(["aplay", "samples/transcribed.wav"])
+                        # vup = Popen(["amixer", "set", "Master", "50%"])
+                        # vup = Popen(["mpc", "volume", "50"])
                         if not is_unknown_text:
                             if args.mqtt_payload_normalize:
                                 text = normalize_pattern.sub("", text.lower())
@@ -218,11 +223,7 @@ if __name__ == "__main__":
                             mqttc.publish(
                                 args.mqtt_topic, payload=text, qos=0, retain=False
                             )
-                            # TODO use python libraries
-                            # you may want to execute few commands on transcription
-                            # aplay = Popen(["aplay", "samples/transcribed.wav"])
-                            # vup = Popen(["amixer", "set", "Master", "50%"])
-                            # vup = Popen(["mpc", "volume", "50%"])
+
                     except requests.exceptions.RequestException as e:
                         logger.error("Request failed %s", e)
 
@@ -259,6 +260,6 @@ if __name__ == "__main__":
                 # TODO use python libraries
                 # you may want to execute few commands on detection
                 # vdown = Popen(["amixer", "set", "Master", "20%"])
-                # vdown = Popen(["mpc", "volume", "20%"])
+                # vdown = Popen(["mpc", "volume", "20"])
                 # aplay = Popen(["aplay", "samples/detected.wav"])
                 break
