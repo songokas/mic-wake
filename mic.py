@@ -11,6 +11,8 @@ import logging
 from scipy.signal import resample
 from threading import Thread
 import re
+from subprocess import Popen
+
 
 # Parse input arguments
 parser = argparse.ArgumentParser()
@@ -216,6 +218,11 @@ if __name__ == "__main__":
                             mqttc.publish(
                                 args.mqtt_topic, payload=text, qos=0, retain=False
                             )
+                            # TODO use python libraries
+                            # you may want to execute few commands on transcription
+                            # aplay = Popen(["aplay", "samples/transcribed.wav"])
+                            # vup = Popen(["amixer", "set", "Master", "50%"])
+                            # vup = Popen(["mpc", "volume", "50%"])
                     except requests.exceptions.RequestException as e:
                         logger.error("Request failed %s", e)
 
@@ -249,4 +256,9 @@ if __name__ == "__main__":
                 obj.setsampwidth(audio.get_sample_size(FORMAT))
                 obj.setframerate(args.input_rate)
                 logger.debug("Wake word detected %s", mdl)
+                # TODO use python libraries
+                # you may want to execute few commands on detection
+                # vdown = Popen(["amixer", "set", "Master", "20%"])
+                # vdown = Popen(["mpc", "volume", "20%"])
+                # aplay = Popen(["aplay", "samples/detected.wav"])
                 break
